@@ -1,0 +1,97 @@
+import { NextRequest, NextResponse } from 'next/server';
+import { supabaseAdmin } from '@/lib/db';
+import { requireAuth } from '@/lib/middleware';
+import { UserRole, ComplaintStatus, VALID_STATUS_TRANSITIONS } from '@/types';
+import type { UpdateComplaintStatusRequest } from '@/types';
+
+export async function PATCH(
+  request: NextRequest,
+  { params }: { params: { id: string } }
+) {
+  const authResult = await requireAuth(request, [UserRole.OFFICER]);
+  if (authResult instanceof NextResponse) return authResult;
+  const user = authResult;
+
+  try {
+    const { id } = params;
+    const body: UpdateComplaintStatusRequest = await request.json();
+    const { status: newStatus, remarks, public_note } = body;
+
+    if (!newStatus) {
+      return NextResponse.json(
+        { success: false, message: 'New status is required.' },
+        { status: 400 }
+      );
+    }
+
+    // Fetch current complaint
+    const { data: complaint, error: fetchError } = await supabaseAdmin
+      .from('complaints')
+      .select('id, status')
+      .eq('id', id)
+      .single();
+
+    if (fetchError || !complaint) {
+      return NextResponse.json(
+        { success: false, message: 'Complaint not found.' },
+        { status: 404 }
+      );
+    }
+
+    // Validate status transition
+    const currentStatus = complaint.status as ComplaintStatus;
+    const allowed = VALID_STATUS_TRANSITIONS[currentStatus] || [];
+    if (!allowed.includes(newStatus)) {
+      return NextResponse.json(
+        {
+          success: false,
+          message: `Cannot transition from "${currentStatus}" to "${newStatus}". Allowed: ${allowed.join(', ') || 'none'}.`,
+        },
+        { status: 400 }
+      );
+    }
+
+    // Update complaint
+    const updateData: Record<string, unknown> = {
+      status: newStatus,
+      updated_at: new Date().toISOString(),
+    };
+
+    if (newStatus === ComplaintStatus.RESOLVED && remarks) {
+      updateData.resolution_notes = remarks;
+    }
+
+    const { error: updateError } = await supabaseAdmin
+      .from('complaints')
+      .update(updateData)
+      .eq('id', id);
+
+    if (updateError) {
+      console.error('[API] status update error:', updateError.message);
+      return NextResponse.json(
+        { success: false, message: 'Failed to update status.' },
+        { status: 500 }
+      );
+    }
+
+    // Insert timeline entry
+    await supabaseAdmin.from('complaint_updates').insert({
+      complaint_id: id,
+      status: newStatus,
+      changed_by: user.id,
+      notes: remarks || null,
+      public_note: public_note || null,
+    });
+
+    return NextResponse.json({
+      success: true,
+      message: `Status updated to "${newStatus}".`,
+    });
+  } catch (err) {
+    console.error('[API] status update error:', err);
+    return NextResponse.json(
+      { success: false, message: 'Internal server error.' },
+      { status: 500 }
+    );
+  }
+}
