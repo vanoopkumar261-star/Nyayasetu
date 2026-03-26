@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server';
+﻿import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/db';
 import { validateOTPSession } from '@/lib/otp';
 import { classifyComplaint } from '@/lib/classifier';
@@ -86,6 +86,8 @@ export async function POST(request: NextRequest) {
       .insert({
         complaint_uid: complaintUID,
         citizen_user_id: citizenId,
+        citizen_phone: session.phone,
+        citizen_name: name,
         title,
         category: classification.category,
         department_id: classification.department_id,
@@ -158,3 +160,5 @@ export async function POST(request: NextRequest) {
     );
   }
 }
+
+
